@@ -111,7 +111,7 @@ class ShapeNetDataset(data.Dataset):
             #volume = np.asarray(getVoxelFromMat(f, self.args.cube_len), dtype=np.float32)
             #plotFromVoxels(volume)
         model_3d_file = [name for name in self.listdir if name.endswith('.' + "binvox")][index]
-        volume = np.asarray(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32)
+        volume = np.array(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32)
         return torch.FloatTensor(volume)
 
     def __len__(self):
@@ -131,22 +131,25 @@ class ShapeNetPlusImageDataset(data.Dataset):
         self.listdir = os.listdir(self.root)
         self.args = args
         self.img_size = args.image_size
-        self.p = transforms.Compose([transforms.Scale((self.img_size, self.img_size))])
+        self.p = transforms.Compose([transforms.Resize((self.img_size, self.img_size))])
 
     def __getitem__(self, index):
 
         model_3d_file = [name for name in self.listdir if name.endswith('.' + "binvox")][index]
 
         model_2d_file = model_3d_file[:-7] + "_002.png"
-        #with open(self.root + model_3d_file, "rb") as f:
-        volume = np.asarray(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32)
-        #print(volume.shape)
-        #plotFromVoxels(volume)
-        #with open(self.root + model_2d_file, "rb") as g:
-        #image = np.array(imread(self.root + model_2d_file))
+        model_2d_file_depth = model_3d_file[:-7] + "_002" + "_depth.png"
+        # Copy arrays to make them writable
+        volume = np.array(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32).copy()
         image = Image.open(self.root + model_2d_file)
-        image = np.asarray(self.p(image))
-        return (torch.FloatTensor(image), torch.FloatTensor(volume) )
+        image_depth = Image.open(self.root + model_2d_file_depth)
+        image = np.array(self.p(image), dtype=np.float32).copy()
+        image_depth = np.array(self.p(image_depth), dtype=np.float32).copy()
+
+        image_depth = image_depth[..., np.newaxis]
+        combined_image = np.dstack((image, image_depth))        
+        
+        return (torch.FloatTensor(combined_image), torch.FloatTensor(volume))
 
     def __len__(self):
         return len( [name for name in self.listdir if name.endswith('.' + "binvox")])
@@ -171,13 +174,15 @@ class ShapeNetMultiviewDataset(data.Dataset):
 
         model_3d_file = [name for name in self.listdir if name.endswith('.' + "binvox")][index]
 
-        model_2d_files = [name for name in self.listdir if name.startswith(model_3d_file[:-7]) and name.endswith(".png")][:24]
+        model_2d_files = [name for name in self.listdir if name.startswith(model_3d_file[:-7]) and name.endswith(".png")][:3]
         #with open(self.root + model_3d_file, "rb") as f:
-        volume = np.asarray(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32)
-        # Make arrays writable and convert to tensors
-        images = [torch.FloatTensor(np.array(self.p(Image.open(self.root + x)), dtype=np.float32).copy()) 
-                 for x in model_2d_files]
-        return (images, torch.FloatTensor(volume))
+        volume = np.array(getVolumeFromBinvox(self.root + model_3d_file), dtype=np.float32)
+        #print(volume.shape)
+        #plotFromVoxels(volume)
+        #with open(self.root + model_2d_file, "rb") as g:
+        #image = np.array(imread(self.root + model_2d_file))
+        images = [torch.FloatTensor(np.array(self.p(Image.open(self.root +x )))) for x in model_2d_files]
+        return (images, torch.FloatTensor(volume) )
 
     def __len__(self):
         return len( [name for name in self.listdir if name.endswith('.' + "binvox")])
@@ -212,18 +217,18 @@ def read_pickle(path, G, G_solver, D_, D_solver,E_=None,E_solver = None ):
         print(recent_iter, path)
 
         with open(path + "/G_" + recent_iter + ".pkl", "rb") as f:
-            G.load_state_dict(torch.load(f, weights_only=True))
+            G.load_state_dict(torch.load(f))
         with open(path + "/G_optim_" + recent_iter + ".pkl", "rb") as f:
-            G_solver.load_state_dict(torch.load(f, weights_only=True))
+            G_solver.load_state_dict(torch.load(f))
         with open(path + "/D_" + recent_iter + ".pkl", "rb") as f:
-            D_.load_state_dict(torch.load(f, weights_only=True))
+            D_.load_state_dict(torch.load(f))
         with open(path + "/D_optim_" + recent_iter + ".pkl", "rb") as f:
-            D_solver.load_state_dict(torch.load(f, weights_only=True))
+            D_solver.load_state_dict(torch.load(f))
         if E_ is not None:
             with open(path + "/E_" + recent_iter + ".pkl", "rb") as f:
-                E_.load_state_dict(torch.load(f, weights_only=True))
+                E_.load_state_dict(torch.load(f))
             with open(path + "/E_optim_" + recent_iter + ".pkl", "rb") as f:
-                E_solver.load_state_dict(torch.load(f, weights_only=True))
+                E_solver.load_state_dict(torch.load(f))
 
 
     except Exception as e:
@@ -250,56 +255,65 @@ def save_new_pickle(path, iteration, G, G_solver, D_, D_solver, E_=None,E_solver
         with open(path + "/E_optim_" + str(iteration) + ".pkl", "wb") as f:
             torch.save(E_solver.state_dict(), f)
 
-def plot_generated_vs_real(generated_voxels, real_voxels, path, iteration):
+def calculate_iou(pred_voxel, gt_voxel, threshold=0.5):
     """
-    Generated ve real voxel'ları yan yana plot eder
+    3D Voxel tensörler için IoU (Intersection over Union) hesaplar.
+    
     Args:
-        generated_voxels: Generator tarafından üretilen voxel data
-        real_voxels: Gerçek voxel data
-        path: Kaydedilecek dosya yolu
-        iteration: İterasyon numarası
+        pred_voxel: Tahmin edilen voxel tensor
+        gt_voxel: Ground truth voxel tensor
+        threshold: Tahmin edilen voxel'i binary'ye çevirmek için eşik değeri
+        
+    Returns:
+        float: IoU değeri
     """
-    fig = plt.figure(figsize=(16, 8))
-    gs = gridspec.GridSpec(1, 2)
-    gs.update(wspace=0.05, hspace=0.05)
-
-    # Generate edilen voxel
-    generated = generated_voxels[0].detach().cpu().numpy()
-    generated = generated.reshape(32, 32, 32)  # Boyutları açıkça belirt
-    generated = generated > 0.5  # Binary değerlere dönüştür
+    # Tensörlerin uygun şekilde biçimlendirilmiş olduğundan emin olalım
+    if pred_voxel.dim() != gt_voxel.dim():
+        print(f"Uyarı: Tensör boyutları eşleşmiyor. pred_voxel: {pred_voxel.shape}, gt_voxel: {gt_voxel.shape}")
+        if pred_voxel.dim() == 5 and gt_voxel.dim() == 4:  # Yaygın bir durum
+            gt_voxel = gt_voxel.view(-1, 1, gt_voxel.size(1), gt_voxel.size(2), gt_voxel.size(3))
+        elif pred_voxel.dim() == 4 and gt_voxel.dim() == 5:
+            pred_voxel = pred_voxel.view(-1, 1, pred_voxel.size(1), pred_voxel.size(2), pred_voxel.size(3))
     
-    ax = plt.subplot(gs[0], projection='3d')
-    voxel_x, voxel_y, voxel_z = np.where(generated == 1)
-    if len(voxel_x) > 0:  # Eğer görüntülenecek voxel varsa
-        ax.scatter(voxel_x, voxel_y, voxel_z, c='red', marker='s', alpha=0.7)
-        ax.set_title('Generated')
-    ax.set_xlim(0, 32)
-    ax.set_ylim(0, 32)
-    ax.set_zlim(0, 32)
-    ax.grid(True)
-
-    # Gerçek voxel
-    real = real_voxels[0].detach().cpu().numpy()
-    real = real.reshape(32, 32, 32)  # Boyutları açıkça belirt
-    real = real > 0.5  # Binary değerlere dönüştür
+    # Tahmin edilen voxel'i binary'ye çevirme (eşik değerinden büyükse 1, değilse 0)
+    pred_binary = (pred_voxel > threshold).float()
+    gt_binary = (gt_voxel > threshold).float()  # GT'nin de binary olduğundan emin olalım
     
-    ax = plt.subplot(gs[1], projection='3d')
-    voxel_x, voxel_y, voxel_z = np.where(real == 1)
-    if len(voxel_x) > 0:  # Eğer görüntülenecek voxel varsa
-        ax.scatter(voxel_x, voxel_y, voxel_z, c='blue', marker='s', alpha=0.7)
-        ax.set_title('Ground Truth')
-    ax.set_xlim(0, 32)
-    ax.set_ylim(0, 32)
-    ax.set_zlim(0, 32)
-    ax.grid(True)
+    # Kesişim ve birleşim hesaplama
+    intersection = torch.sum(pred_binary * gt_binary).float()
+    union = torch.sum(torch.clamp(pred_binary + gt_binary, 0, 1)).float()
+    
+    # Sıfıra bölme hatasını önlemek için kontrol
+    if union.item() < 1e-6:
+        return 0.0
+        
+    return (intersection / union).item()
 
-    # Görselleştirme açısını ayarla
-    for ax in fig.get_axes():
-        ax.view_init(elev=30, azim=45)
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-        ax.set_zticklabels([])
-
-    plt.savefig(path + '/comparison_{}.png'.format(str(iteration).zfill(3)), 
-                bbox_inches='tight', dpi=200)
-    plt.close()
+def calculate_metrics(y_pred, y_true, threshold=0.5):
+    """
+    Discriminator için precision, recall ve F1 score hesaplar.
+    
+    Args:
+        y_pred: Tahmin edilen değerler (discriminator çıktısı)
+        y_true: Gerçek etiketler
+        threshold: İkili sınıflandırma için eşik değeri
+        
+    Returns:
+        tuple: (precision, recall, f1_score) değerleri
+    """
+    # Tahminleri binary'ye çevirme
+    y_pred_binary = (y_pred >= threshold).float()
+    
+    # True Positive (TP), False Positive (FP), False Negative (FN) hesaplama
+    tp = torch.sum(y_pred_binary * y_true).item()
+    fp = torch.sum(y_pred_binary * (1 - y_true)).item()
+    fn = torch.sum((1 - y_pred_binary) * y_true).item()
+    
+    # Sıfıra bölme hatasını önlemek için kontrol
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    
+    # F1 Score hesaplama
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return precision, recall, f1_score

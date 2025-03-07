@@ -2,19 +2,19 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
 import argparse
-from train_multiview import train_multiview
-from test_3DVAEGAN_MULTIVIEW import test_3DVAEGAN_MULTIVIEW
+from train_vae import train_vae
+from test_3DVAEGAN import test_3DVAEGAN
 
 def main(args):
 
     if args.test == False:        
-        if args.alg_type == '3DVAEGAN_MULTIVIEW':
-            train_multiview(args)
+        if args.alg_type == '3DVAEGAN':
+            train_vae(args)
+        
     else:
-        if args.alg_type == '3DVAEGAN_MULTIVIEW':
-            print("TESTING 3DVAEGANMULTIVIEW")
-            test_3DVAEGAN_MULTIVIEW(args)
-
+        if args.alg_type == '3DVAEGAN':
+            print("TESTING 3DVAEGAN")
+            test_3DVAEGAN(args)
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -27,7 +27,7 @@ def str2bool(v):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # Model Parmeters
-    parser.add_argument('--n_epochs', type=float, default=1000,
+    parser.add_argument('--n_epochs', type=float, default=100,
                         help='max epochs')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='each batch size')
@@ -75,28 +75,28 @@ if __name__ == '__main__':
                         help='dataset load path')
 
     # step parameter
-    parser.add_argument('--pickle_step', type=int, default=1,
+    parser.add_argument('--pickle_step', type=int, default=10,
                         help='pickle save at pickle_step epoch')
     parser.add_argument('--log_step', type=int, default=1,
                         help='tensorboard log save at log_step epoch')
-    parser.add_argument('--image_save_step', type=int, default=1,
+    parser.add_argument('--image_save_step', type=int, default=10,
                         help='output image save at image_save_step epoch')
 
     # other parameters
-    parser.add_argument('--alg_type', type=str, default='3DVAEGAN_MULTIVIEW',
+    parser.add_argument('--alg_type', type=str, default='3DVAEGAN',
                         help='for test')
     parser.add_argument('--combine_type', type=str, default='mean',
                         help='for test')
-    parser.add_argument('--num_views', type=int, default=24,
+    parser.add_argument('--num_views', type=int, default=12,
                         help='for test')
 
-    parser.add_argument('--model_name', type=str, default="telephone_Multiview",
+    parser.add_argument('--model_name', type=str, default="telephone_3DVAEGAN",
                         help='this model name for save pickle, logs, output image path and if model_name contain V2 modelV2 excute')
     parser.add_argument('--use_tensorboard', type=str2bool, default=True,
                         help='using tensorboard logging')
     parser.add_argument('--test_iter', type=int, default=10,
                         help='test_epoch number')
-    parser.add_argument('--test', type=str2bool, default=False,
+    parser.add_argument('--test', type=str2bool, default=True,
                         help='for test')
 
 
